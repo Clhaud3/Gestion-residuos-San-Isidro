@@ -256,15 +256,17 @@
             const data = await response.json();
             
             redContenedores.forEach(c => {
-                let w, t, h;
-                if (c.isReal) {
-                    w = data.global.count;
-                    t = data.global.temperature;
-                    h = data.global.history;
-                } else if (data.simulados[c.t]) {
-                    w = data.simulados[c.t].current_weight;
-                    t = data.simulados[c.t].current_temp;
-                    h = data.simulados[c.t].history;
+                // ASIGNAR VALORES POR DEFECTO PARA EVITAR UNDEFINED
+                let w = 0, t = 0, h = [];
+
+                if (c.isReal && data.global) {
+                    w = data.global.count || 0;
+                    t = data.global.temperature || 0;
+                    h = data.global.history || [];
+                } else if (data.simulados && data.simulados[c.t]) {
+                    w = data.simulados[c.t].current_weight || 0;
+                    t = data.simulados[c.t].current_temp || 0;
+                    h = data.simulados[c.t].history || [];
                 }
 
                 const state = getStatusData(w);
@@ -291,7 +293,7 @@
                     updateChart(h);
                 }
             });
-        } catch (e) { }
+        } catch (e) { console.error("Error fetching data:", e); }
     }
 
     function updateChart(historyData) {
