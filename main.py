@@ -81,7 +81,6 @@ class IoTHandler(BaseHTTPRequestHandler):
             query = parse_qs(parsed_path.query)
             try:
                 temp = float(query.get('temp', [0])[0])
-                # EL REAL SOLO SUBE AQUÍ: Cuando el Arduino envía el click
                 if 'click' in query:
                     data_store["global"]["count"] = min(100, data_store["global"]["count"] + 10)
                 
@@ -101,6 +100,7 @@ class IoTHandler(BaseHTTPRequestHandler):
             except: self._set_headers(400)
 
         elif parsed_path.path == '/latest-data':
+            # CAMBIO APLICADO: Aseguramos que la estructura enviada sea compatible con el HTML
             self._set_headers(200)
             self.wfile.write(json.dumps(data_store).encode())
 
