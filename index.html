@@ -63,7 +63,7 @@
 
 <div class="container">
     <header>
-        <h1>Sistema de Recogida de Basura Inteligente-San Isidro</h1>
+        <h1>Sistema de Recogida de Basura Inteligente - San Isidro</h1>
         <button id="route-btn" onclick="gestionarRecogida()"> Trazar Ruta Eficiente</button>
         <div id="km-display">📍 Distancia total: <span id="km-val">0</span> km</div>
     </header>
@@ -264,14 +264,15 @@
                 let current_w, current_t, current_history;
                 
                 if (c.isReal) {
-                    current_w = parseFloat(data.global.count);
-                    current_t = parseFloat(data.global.temperature);
-                    current_history = data.global.history;
+                    // Verificación de datos reales para evitar el 0.0 si el servidor envía nulos
+                    current_w = data.global && data.global.count !== undefined ? parseFloat(data.global.count) : 0;
+                    current_t = data.global && data.global.temperature !== undefined ? parseFloat(data.global.temperature) : 0;
+                    current_history = data.global ? data.global.history : [];
                 } else {
                     const sim = data.simulados[c.t];
-                    current_w = parseFloat(sim.current_weight);
-                    current_t = parseFloat(sim.current_temp);
-                    current_history = sim.history;
+                    current_w = sim ? parseFloat(sim.current_weight) : 0;
+                    current_t = sim ? parseFloat(sim.current_temp) : 0;
+                    current_history = sim ? sim.history : [];
                 }
 
                 const state = getStatusData(current_w);
@@ -286,27 +287,36 @@
 
                 // SI ESTE ES EL CONTENEDOR SELECCIONADO, ACTUALIZAMOS LOS CUADROS
                 if (c.t === selectedContainerName) {
-                    // 1. Actualizar números
-                    document.getElementById('v-count').innerHTML = current_w.toFixed(1) + '<span class="unit">L</span>';
-                    document.getElementById('v-temp').innerHTML = current_t.toFixed(1) + '<span class="unit">°C</span>';
+                    // ACTUALIZACIÓN DE NÚMEROS (Corregido para asegurar refresco)
+                    const countEl = document.getElementById('v-count');
+                    const tempEl = document.getElementById('v-temp');
                     
-                    // 2. Actualizar cajas de estado
+                    if (countEl) countEl.innerHTML = `${current_w.toFixed(1)}<span class="unit">L</span>`;
+                    if (tempEl) tempEl.innerHTML = `${current_t.toFixed(1)}<span class="unit">°C</span>`;
+                    
+                    // Actualizar cajas de estado y colores
                     const sBox = document.getElementById('status-text');
                     const tBox = document.getElementById('t-temp');
                     
                     if (current_t >= 40) {
-                        tBox.innerText = "🔥 ¡ALERTA FUEGO!"; 
-                        tBox.style.background = "#000"; 
-                        tBox.style.color = "#e74c3c";
+                        if(tBox) {
+                            tBox.innerText = "🔥 ¡ALERTA FUEGO!"; 
+                            tBox.style.background = "#000"; 
+                            tBox.style.color = "#e74c3c";
+                        }
                     } else {
-                        tBox.innerText = "Sensor Activo"; 
-                        tBox.style.background = "#eee"; 
-                        tBox.style.color = "#333";
+                        if(tBox) {
+                            tBox.innerText = "Sensor Activo"; 
+                            tBox.style.background = "#eee"; 
+                            tBox.style.color = "#333";
+                        }
                     }
-                    sBox.innerText = `ESTADO: ${state.label}`;
-                    sBox.style.background = state.color;
+                    if(sBox) {
+                        sBox.innerText = `ESTADO: ${state.label}`;
+                        sBox.style.background = state.color;
+                    }
                     
-                    // 3. Actualizar gráfico
+                    // Actualizar gráfico
                     updateChart(current_history);
                 }
             });
