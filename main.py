@@ -9,60 +9,57 @@ import threading
 
 PORT_NUMBER = 8888
 
-# --- ESTRUCTURA DE DATOS ---
-data_store = {
-    "global": { # ESTE ES EL REAL (Calle del agua)
-        "temperature": 0.0, 
-        "count": 0.0,
-        "timestamp": "--", 
-        "history": [] 
-    },
-    "simulados": {} # ESTOS SON LOS FALSOS
-}
-
+# --- CONFIGURACIÓN DE INICIO ---
+# Ahora sí: Valor aleatorio real entre 0 y 30 (incluye todos los decimales)
 NOMBRES_SIMULADOS = [
     "Ronda Palmeras", "Calle José Antonio Cutillas", "Calle Palmeras",
     "Avenida de Catral", "Calle la Huerta", "Calle Pedro Lopez",
     "Calle Paz", "Ronda del Amor"
 ]
 
+data_store = {
+    "global": {
+        "temperature": 0.0, 
+        "count": 0,
+        "timestamp": "--", 
+        "status": "Iniciando...",
+        "history": [] 
+    },
+    "simulados": {} 
+}
+
 def obtener_objetivo_san_isidro():
     hora = datetime.now().hour
     return 22.0 if 11 <= hora <= 19 else 13.0
 
-# Inicialización: Empiezan entre 0 y 30
+# Inicialización con cualquier número entre 0 y 30
 for nombre in NOMBRES_SIMULADOS:
-    # Elegimos un valor inicial que sea múltiplo de 10 para que sea estético (0, 10, 20 o 30)
-    peso_ini = random.choice([0.0, 10.0, 20.0, 30.0])
+    valor_aleatorio = round(random.uniform(0, 30), 1)
     data_store["simulados"][nombre] = {
-        "current_weight": peso_ini,
+        "current_weight": valor_aleatorio,
         "current_temp": obtener_objetivo_san_isidro() + random.uniform(-1, 1),
-        "history": [{"timestamp": datetime.now().strftime("%H:%M:%S"), "weight": peso_ini}]
+        "history": [{"timestamp": datetime.now().strftime("%H:%M:%S"), "weight": valor_aleatorio}]
     }
 
-# --- HILO DE LLENADO PARA FALSOS (PASOS DE 10) ---
-def bucle_llenado_automatico():
+# --- HILO DE LLENADO: +10 cada 30 segundos ---
+def bucle_llenado_estricto():
     while True:
-        # Esperamos un tiempo largo (ej. 60 segundos) para simular que alguien tira basura
-        time.sleep(60) 
-        
+        time.sleep(30) # Intervalo exacto de 30 segundos
         ts = datetime.now().strftime("%H:%M:%S")
         
         for nombre in data_store["simulados"]:
             contenedor = data_store["simulados"][nombre]
             
-            # Probabilidad del 30% de que este contenedor se llene en este ciclo
-            if random.random() < 0.3: 
-                nuevo_volumen = contenedor["current_weight"] + 10.0
+            # Aumento de 10 exactos sobre el valor que tengan
+            nuevo_peso = contenedor["current_weight"] + 10.0
+            
+            if nuevo_peso <= 100:
+                contenedor["current_weight"] = round(nuevo_peso, 1)
+                contenedor["history"].append({"timestamp": ts, "weight": round(nuevo_peso, 1)})
                 
-                if nuevo_volumen <= 100:
-                    contenedor["current_weight"] = nuevo_volumen
-                    contenedor["history"].append({"timestamp": ts, "weight": nuevo_volumen})
-                    
-                    if len(contenedor["history"]) > 15:
-                        contenedor["history"].pop(0)
+                if len(contenedor["history"]) > 15:
+                    contenedor["history"].pop(0)
 
-# --- SERVIDOR ---
 class IoTHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args): return 
 
@@ -72,28 +69,10 @@ class IoTHandler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
 
-    def do_POST(self):
-        parsed_path = urlparse(self.path)
-        if parsed_path.path == '/reset':
-            content_length = int(self.headers['Content-Length'])
-            params = json.loads(self.rfile.read(content_length))
-            contenedores_a_vaciar = params.get('contenedores', [])
-
-            for nombre in contenedores_a_vaciar:
-                if nombre == "Calle del agua":
-                    data_store["global"]["count"] = 0.0
-                    data_store["global"]["history"] = []
-                elif nombre in data_store["simulados"]:
-                    data_store["simulados"][nombre]["current_weight"] = 0.0
-                    data_store["simulados"][nombre]["history"] = [{"timestamp": datetime.now().strftime("%H:%M:%S"), "weight": 0.0}]
-            
-            self._set_headers(200)
-            self.wfile.write(json.dumps({"status": "success"}).encode())
-
     def do_GET(self):
         parsed_path = urlparse(self.path)
         
-        if parsed_path.path in ['/', '/index.html']:
+        if parsed_path.path == '/' or parsed_path.path == '/index.html':
             try:
                 with open('index.html', 'rb') as file:
                     self._set_headers(200, 'text/html')
@@ -103,26 +82,22 @@ class IoTHandler(BaseHTTPRequestHandler):
         elif parsed_path.path == '/data-receiver':
             query = parse_qs(parsed_path.query)
             try:
-                temp = float(query.get('temp', [20])[0])
-                
-                # --- LÓGICA EXCLUSIVA PARA EL REAL ---
+                temp = float(query.get('temp', [0])[0])
                 if 'click' in query:
-                    # Incremento exacto de 10
-                    data_store["global"]["count"] = min(100.0, data_store["global"]["count"] + 10.0)
+                    # El real también sube de 10 en 10
+                    data_store["global"]["count"] = min(100, data_store["global"]["count"] + 10)
                 
-                peso_actual = data_store["global"]["count"]
                 ts = datetime.now().strftime("%H:%M:%S")
-                
                 data_store["global"].update({
                     "temperature": temp,
-                    "timestamp": ts
+                    "timestamp": ts,
+                    "status": "LLENO" if data_store["global"]["count"] >= 80 else "OK"
                 })
                 
                 hist = data_store["global"]["history"]
-                if not hist or hist[-1]["weight"] != peso_actual:
-                    hist.append({"timestamp": ts, "weight": peso_actual})
-                if len(hist) > 15: hist.pop(0)
-
+                if not hist or hist[-1]["weight"] != data_store["global"]["count"]:
+                    hist.append({"timestamp": ts, "weight": float(data_store["global"]["count"])})
+                
                 self._set_headers(200)
                 self.wfile.write(json.dumps({"status": "success"}).encode())
             except: self._set_headers(400)
@@ -131,10 +106,24 @@ class IoTHandler(BaseHTTPRequestHandler):
             self._set_headers(200)
             self.wfile.write(json.dumps(data_store).encode())
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", PORT_NUMBER))
-    # Iniciar hilo para los falsos
-    threading.Thread(target=bucle_llenado_automatico, daemon=True).start()
-    server = HTTPServer(('0.0.0.0', port), IoTHandler)
-    server.serve_forever()
+    def do_POST(self):
+        # Mantenemos tu lógica de reset para vaciar
+        parsed_path = urlparse(self.path)
+        if parsed_path.path == '/reset':
+            content_length = int(self.headers['Content-Length'])
+            params = json.loads(self.rfile.read(content_length))
+            for nombre in params.get('contenedores', []):
+                if nombre == "Calle del agua":
+                    data_store["global"]["count"] = 0
+                    data_store["global"]["history"] = []
+                elif nombre in data_store["simulados"]:
+                    data_store["simulados"][nombre]["current_weight"] = 0.0
+                    data_store["simulados"][nombre]["history"] = []
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"status": "success"}).encode())
 
+if __name__ == '__main__':
+    # Arrancamos el hilo de los 30 segundos
+    threading.Thread(target=bucle_llenado_estricto, daemon=True).start()
+    server = HTTPServer(('0.0.0.0', PORT_NUMBER), IoTHandler)
+    server.serve_forever()
