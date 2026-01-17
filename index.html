@@ -261,43 +261,53 @@
             const data = await response.json();
             
             redContenedores.forEach(c => {
-                // CAMBIO CLAVE: Diferenciar entre datos globales (Arduino) y simulados
-                let w, t, history;
+                let current_w, current_t, current_history;
+                
                 if (c.isReal) {
-                    w = data.global.count;
-                    t = data.global.temperature;
-                    history = data.global.history;
+                    current_w = parseFloat(data.global.count);
+                    current_t = parseFloat(data.global.temperature);
+                    current_history = data.global.history;
                 } else {
                     const sim = data.simulados[c.t];
-                    w = sim.current_weight;
-                    t = sim.current_temp;
-                    history = sim.history;
+                    current_w = parseFloat(sim.current_weight);
+                    current_t = parseFloat(sim.current_temp);
+                    current_history = sim.history;
                 }
 
-                const state = getStatusData(w);
-                let iconUrl = t >= 40 ? iconsMap.fuego : iconsMap[state.key];
+                const state = getStatusData(current_w);
+                let iconUrl = current_t >= 40 ? iconsMap.fuego : iconsMap[state.key];
                 
                 markers[c.t].setIcon(L.icon({
                     iconUrl: iconUrl, 
-                    shadowUrl: t >= 40 ? null : shadowUrl,
-                    iconSize: t >= 40 ? [35, 35] : [25, 41], 
-                    iconAnchor: t >= 40 ? [17, 17] : [12, 41]
+                    shadowUrl: current_t >= 40 ? null : shadowUrl,
+                    iconSize: current_t >= 40 ? [35, 35] : [25, 41], 
+                    iconAnchor: current_t >= 40 ? [17, 17] : [12, 41]
                 }));
 
+                // SI ESTE ES EL CONTENEDOR SELECCIONADO, ACTUALIZAMOS LOS CUADROS
                 if (c.t === selectedContainerName) {
-                    document.getElementById('v-count').innerHTML = w.toFixed(1) + '<span class="unit">L</span>';
-                    document.getElementById('v-temp').innerHTML = t.toFixed(1) + '<span class="unit">°C</span>';
+                    // 1. Actualizar números
+                    document.getElementById('v-count').innerHTML = current_w.toFixed(1) + '<span class="unit">L</span>';
+                    document.getElementById('v-temp').innerHTML = current_t.toFixed(1) + '<span class="unit">°C</span>';
+                    
+                    // 2. Actualizar cajas de estado
                     const sBox = document.getElementById('status-text');
                     const tBox = document.getElementById('t-temp');
                     
-                    if (t >= 40) {
-                        tBox.innerText = "🔥 ¡ALERTA FUEGO!"; tBox.style.background = "#000"; tBox.style.color = "#e74c3c";
+                    if (current_t >= 40) {
+                        tBox.innerText = "🔥 ¡ALERTA FUEGO!"; 
+                        tBox.style.background = "#000"; 
+                        tBox.style.color = "#e74c3c";
                     } else {
-                        tBox.innerText = "Sensor Activo"; tBox.style.background = "#eee"; tBox.style.color = "#333";
+                        tBox.innerText = "Sensor Activo"; 
+                        tBox.style.background = "#eee"; 
+                        tBox.style.color = "#333";
                     }
                     sBox.innerText = `ESTADO: ${state.label}`;
                     sBox.style.background = state.color;
-                    updateChart(history);
+                    
+                    // 3. Actualizar gráfico
+                    updateChart(current_history);
                 }
             });
         } catch (e) { console.log("Error fetching:", e); }
