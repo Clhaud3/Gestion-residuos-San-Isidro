@@ -109,7 +109,7 @@
     let lastUpdateTimestamp = null;
     let modoRecogida = false;
     let elementosRuta = []; 
-    let contenedoresEnRuta = []; // Nueva variable para el reset selectivo
+    let contenedoresEnRuta = []; 
     const ctx = document.getElementById('historyChart').getContext('2d');
 
     const COORD_NAVE = [38.176611, -0.838111];
@@ -190,17 +190,12 @@
 
     async function gestionarRecogida() {
         const btn = document.getElementById('route-btn');
-        
-        // --- LÓGICA DE VACIADO SELECTIVO ---
         if (modoRecogida) { 
             if(confirm("¿Confirmar vaciado de los contenedores recogidos?")) {
                 try {
                     const res = await fetch(`${BASE_URL}/reset`, { 
                         method: 'POST',
-                        headers: { 
-                            'ngrok-skip-browser-warning': 'true',
-                            'Content-Type': 'application/json' 
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ contenedores: contenedoresEnRuta })
                     });
                     if (res.ok) {
@@ -214,7 +209,6 @@
             return; 
         }
 
-        // --- LÓGICA DE TRAZADO DE RUTA ---
         const críticos = redContenedores.filter(c => {
             const currentIcon = markers[c.t].options.icon.options.iconUrl;
             return currentIcon.includes('red') || currentIcon.includes('426833');
@@ -225,9 +219,7 @@
             return; 
         }
 
-        // Guardamos los nombres para el vaciado posterior
         contenedoresEnRuta = críticos.map(c => c.t);
-
         let coordsArr = [[COORD_NAVE[1], COORD_NAVE[0]]];
         críticos.forEach(c => coordsArr.push([c.pos[1], c.pos[0]]));
         coordsArr.push([COORD_NAVE[1], COORD_NAVE[0]]);
@@ -238,15 +230,12 @@
         try {
             const res = await fetch(url);
             const data = await res.json();
-            
             if (data.code === 'Ok') {
                 elementosRuta.forEach(el => map.removeLayer(el));
                 elementosRuta = [];
-
                 const route = data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
                 const polyline = L.polyline(route, { color: '#1a2a6c', weight: 6, opacity: 0.8 }).addTo(map);
                 elementosRuta.push(polyline);
-
                 críticos.forEach((c, index) => {
                     const label = L.marker(c.pos, {
                         icon: L.divIcon({ className: 'order-label', html: index + 1, iconAnchor: [12, 12] }),
@@ -254,7 +243,6 @@
                     }).addTo(map);
                     elementosRuta.push(label);
                 });
-
                 document.getElementById('km-val').innerText = (data.routes[0].distance / 1000).toFixed(2);
                 document.getElementById('km-display').style.display = 'block';
                 btn.innerText = "🏁 Confirmar Vaciado de Ruta";
@@ -269,17 +257,31 @@
 
     async function fetchData() {
         try {
-            const response = await fetch(`${BASE_URL}/latest-data`, { headers: { 'ngrok-skip-browser-warning': 'true' } });
+            const response = await fetch(`${BASE_URL}/latest-data`);
             const data = await response.json();
+            
             redContenedores.forEach(c => {
-                let w = c.isReal ? data.global.count : data.simulados[c.t].current_weight;
-                let t = c.isReal ? data.global.temperature : data.simulados[c.t].current_temp;
+                // CAMBIO CLAVE: Diferenciar entre datos globales (Arduino) y simulados
+                let w, t, history;
+                if (c.isReal) {
+                    w = data.global.count;
+                    t = data.global.temperature;
+                    history = data.global.history;
+                } else {
+                    const sim = data.simulados[c.t];
+                    w = sim.current_weight;
+                    t = sim.current_temp;
+                    history = sim.history;
+                }
+
                 const state = getStatusData(w);
-                
                 let iconUrl = t >= 40 ? iconsMap.fuego : iconsMap[state.key];
+                
                 markers[c.t].setIcon(L.icon({
-                    iconUrl: iconUrl, shadowUrl: t >= 40 ? null : shadowUrl,
-                    iconSize: t >= 40 ? [35, 35] : [25, 41], iconAnchor: t >= 40 ? [17, 17] : [12, 41]
+                    iconUrl: iconUrl, 
+                    shadowUrl: t >= 40 ? null : shadowUrl,
+                    iconSize: t >= 40 ? [35, 35] : [25, 41], 
+                    iconAnchor: t >= 40 ? [17, 17] : [12, 41]
                 }));
 
                 if (c.t === selectedContainerName) {
@@ -295,14 +297,14 @@
                     }
                     sBox.innerText = `ESTADO: ${state.label}`;
                     sBox.style.background = state.color;
-                    updateChart(c.isReal ? data.global.history : data.simulados[c.t].history);
+                    updateChart(history);
                 }
             });
-        } catch (e) { }
+        } catch (e) { console.log("Error fetching:", e); }
     }
 
     function updateChart(historyData) {
-        if (!myChart || !historyData.length) return;
+        if (!myChart || !historyData || !historyData.length) return;
         const lastPoint = historyData[historyData.length - 1];
         if (lastPoint.timestamp !== lastUpdateTimestamp) {
             lastUpdateTimestamp = lastPoint.timestamp;
