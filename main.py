@@ -10,7 +10,7 @@ import threading
 PORT_NUMBER = 8888
 
 # --- CONFIGURACIÓN DE INICIO ---
-# Ahora sí: Valor aleatorio real entre 0 y 30 (incluye todos los decimales)
+# Lista corregida: "Calle del agua" NO está aquí, por tanto NO se simula.
 NOMBRES_SIMULADOS = [
     "Ronda Palmeras", "Calle José Antonio Cutillas", "Calle Palmeras",
     "Avenida de Catral", "Calle la Huerta", "Calle Pedro Lopez",
@@ -18,7 +18,7 @@ NOMBRES_SIMULADOS = [
 ]
 
 data_store = {
-    "global": {
+    "global": { # ESTE ES EL REAL (Calle del agua)
         "temperature": 0.0, 
         "count": 0,
         "timestamp": "--", 
@@ -32,7 +32,7 @@ def obtener_objetivo_san_isidro():
     hora = datetime.now().hour
     return 22.0 if 11 <= hora <= 19 else 13.0
 
-# Inicialización con cualquier número entre 0 y 30
+# Inicialización solo de los simulados (0-30L aleatorio)
 for nombre in NOMBRES_SIMULADOS:
     valor_aleatorio = round(random.uniform(0, 30), 1)
     data_store["simulados"][nombre] = {
@@ -41,16 +41,14 @@ for nombre in NOMBRES_SIMULADOS:
         "history": [{"timestamp": datetime.now().strftime("%H:%M:%S"), "weight": valor_aleatorio}]
     }
 
-# --- HILO DE LLENADO: +10 cada 30 segundos ---
+# --- HILO DE LLENADO: +10 cada 30 segundos SOLO para los simulados ---
 def bucle_llenado_estricto():
     while True:
-        time.sleep(30) # Intervalo exacto de 30 segundos
+        time.sleep(30) 
         ts = datetime.now().strftime("%H:%M:%S")
         
         for nombre in data_store["simulados"]:
             contenedor = data_store["simulados"][nombre]
-            
-            # Aumento de 10 exactos sobre el valor que tengan
             nuevo_peso = contenedor["current_weight"] + 10.0
             
             if nuevo_peso <= 100:
@@ -83,8 +81,8 @@ class IoTHandler(BaseHTTPRequestHandler):
             query = parse_qs(parsed_path.query)
             try:
                 temp = float(query.get('temp', [0])[0])
+                # EL REAL SOLO SUBE AQUÍ: Cuando el Arduino envía el click
                 if 'click' in query:
-                    # El real también sube de 10 en 10
                     data_store["global"]["count"] = min(100, data_store["global"]["count"] + 10)
                 
                 ts = datetime.now().strftime("%H:%M:%S")
@@ -107,7 +105,6 @@ class IoTHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(data_store).encode())
 
     def do_POST(self):
-        # Mantenemos tu lógica de reset para vaciar
         parsed_path = urlparse(self.path)
         if parsed_path.path == '/reset':
             content_length = int(self.headers['Content-Length'])
@@ -123,7 +120,6 @@ class IoTHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"status": "success"}).encode())
 
 if __name__ == '__main__':
-    # Arrancamos el hilo de los 30 segundos
     threading.Thread(target=bucle_llenado_estricto, daemon=True).start()
     server = HTTPServer(('0.0.0.0', PORT_NUMBER), IoTHandler)
     server.serve_forever()
