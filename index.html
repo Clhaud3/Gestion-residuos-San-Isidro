@@ -40,17 +40,22 @@
         .unit { font-size: 0.4em; color: #888; margin-left: 5px; }
         .status-container { margin-top: 15px; padding: 10px; border-radius: 20px; font-size: 0.9em; font-weight: bold; color: white; transition: all 0.3s; }
         .dashboard-content { display: none; margin-top: 20px; }
+        .order-label {
+            background: var(--primary); color: #fff; border-radius: 50%;
+            width: 24px !important; height: 24px !important;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold; border: 2px solid white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3); font-size: 12px;
+        }
         #route-btn {
             padding: 12px 25px; background: #27ae60; color: white;
             border: none; border-radius: 8px; cursor: pointer;
             font-weight: bold; font-size: 1rem; margin-top: 15px;
             transition: all 0.3s ease; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        .order-label {
-            background: var(--primary); color: #fff; border-radius: 50%;
-            width: 24px !important; height: 24px !important;
-            display: flex; align-items: center; justify-content: center;
-            font-weight: bold; border: 2px solid white; font-size: 12px;
+        #km-display {
+            margin-top: 10px; font-weight: bold; color: var(--primary);
+            display: none; font-size: 1.1em;
         }
     </style>
 </head>
@@ -58,21 +63,25 @@
 
 <div class="container">
     <header>
-        <h1>Sistema de Recogida de Basura Inteligente - San Isidro</h1>
+        <h1>Sistema de Recogida de Basura Inteligente-San Isidro</h1>
         <button id="route-btn" onclick="gestionarRecogida()"> Trazar Ruta Eficiente</button>
-        <div id="km-display" style="display:none; margin-top:10px; font-weight:bold; color:var(--primary);">
-            📍 Distancia total: <span id="km-val">0</span> km
-        </div>
+        <div id="km-display">📍 Distancia total: <span id="km-val">0</span> km</div>
     </header>
 
     <div id="map-container">
         <div id="map" class="map-expanded"></div>
         <div id="legend">
-            <div class="legend-item"><span class="dot" style="background:var(--vacio)"></span> Vacío </div>
+            <div class="legend-item"><span class="dot" style="background:var(--vacio)"></span> Vacio </div>
             <div class="legend-item"><span class="dot" style="background:var(--mitad)"></span> Mitad </div>
             <div class="legend-item"><span class="dot" style="background:var(--lleno)"></span> Lleno </div>
-            <div class="legend-item"><img src="https://cdn-icons-png.flaticon.com/512/2271/2271068.png" style="width:18px;"> Nave Industrial</div>
-            <div class="legend-item"><img src="https://cdn-icons-png.flaticon.com/512/426/426833.png" style="width:16px;"> Fuego</div>
+            <div class="legend-item">
+                <img src="https://cdn-icons-png.flaticon.com/512/2271/2271068.png" style="width:18px; height:18px;"> 
+                Nave Industrial
+            </div>
+            <div class="legend-item">
+                <img src="https://cdn-icons-png.flaticon.com/512/426/426833.png" style="width:16px; height:16px;"> 
+                Fuego
+            </div>
         </div>
     </div>
 
@@ -95,18 +104,24 @@
 
 <script>
     const BASE_URL = window.location.origin;
-    let myChart = null;
+    let myChart;
     let selectedContainerName = null;
-    let markers = {};
+    let lastUpdateTimestamp = null;
     let modoRecogida = false;
-    let rutaLayers = [];
+    let elementosRuta = []; 
+    let contenedoresEnRuta = []; 
+    const ctx = document.getElementById('historyChart').getContext('2d');
+
+    const COORD_NAVE = [38.176611, -0.838111];
 
     const map = L.map('map').setView([38.1730, -0.8385], 16);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-    // Icono Nave
-    L.marker([38.176611, -0.838111], {
-        icon: L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/2271/2271068.png', iconSize: [35, 35], iconAnchor: [17, 35] })
+    L.marker(COORD_NAVE, {
+        icon: L.icon({
+            iconUrl: 'https://cdn-icons-png.flaticon.com/512/2271/2271068.png',
+            iconSize: [35, 35], iconAnchor: [17, 35]
+        })
     }).addTo(map).bindPopup("<b>Base Logística: Nave Polígono</b>");
 
     const iconsMap = {
@@ -115,6 +130,8 @@
         rojo: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
         fuego: 'https://cdn-icons-png.flaticon.com/512/426/426833.png'
     };
+    
+    const shadowUrl = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png';
 
     const redContenedores = [
         {pos: [38.173479, -0.835883], t: "Ronda del Amor", isReal: false},
@@ -128,81 +145,174 @@
         {pos: [38.170535, -0.838425], t: "Calle del agua", isReal: true}
     ];
 
-    redContenedores.forEach(c => {
+    const markers = {};
+
+    function getStatusData(weight) {
+        if (weight >= 90) return { label: "LLENO", color: "var(--lleno)", key: "rojo" };
+        if (weight >= 50) return { label: "MITAD", color: "var(--mitad)", key: "amarillo" };
+        return { label: "VACIO", color: "var(--vacio)", key: "verde" };
+    }
+
+    redContenedores.forEach((c) => {
         const m = L.marker(c.pos, {
-            icon: L.icon({ iconUrl: iconsMap.verde, iconSize: [25, 41], iconAnchor: [12, 41], shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png' })
+            icon: L.icon({ 
+                iconUrl: iconsMap.verde, shadowUrl: shadowUrl,
+                iconSize: [25, 41], iconAnchor: [12, 41]
+            })
         }).addTo(map);
-        m.on('click', () => onContainerClick(c.t));
+        m.on('click', (e) => { L.DomEvent.stopPropagation(e); onContainerClick(c.t); });
         markers[c.t] = m;
     });
 
+    fetchData();
+    setInterval(fetchData, 1000);
+
+    map.on('click', function() { resetToInitialState(); });
+
+    function resetToInitialState() {
+        selectedContainerName = null;
+        lastUpdateTimestamp = null;
+        document.getElementById('map').classList.add('map-expanded');
+        document.getElementById('main-dashboard').style.display = 'none';
+        setTimeout(() => { map.invalidateSize(); map.setView([38.1730, -0.8385], 16); }, 550);
+    }
+
     function onContainerClick(name) {
         selectedContainerName = name;
+        lastUpdateTimestamp = null;
         document.getElementById('map').classList.remove('map-expanded');
+        setTimeout(() => map.invalidateSize(), 550);
         document.getElementById('main-dashboard').style.display = 'block';
         document.getElementById('container-title').innerText = "Contenedor: " + name;
-        setTimeout(() => { map.invalidateSize(); initChart(); fetchData(); }, 500);
+        initChart(); 
+        fetchData(); 
+    }
+
+    async function gestionarRecogida() {
+        const btn = document.getElementById('route-btn');
+        if (modoRecogida) { 
+            if(confirm("¿Confirmar vaciado de los contenedores recogidos?")) {
+                try {
+                    const res = await fetch(`${BASE_URL}/reset`, { 
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ contenedores: contenedoresEnRuta })
+                    });
+                    if (res.ok) {
+                        alert("Contenedores vaciados correctamente.");
+                        location.reload(); 
+                    }
+                } catch (e) { alert("Error al vaciar."); }
+            }
+            return; 
+        }
+
+        const críticos = redContenedores.filter(c => {
+            const m = markers[c.t];
+            const icon = m.options.icon.options.iconUrl;
+            return icon.includes('red') || icon.includes('426833');
+        });
+
+        if (críticos.length === 0) { alert("No hay contenedores críticos."); return; }
+
+        contenedoresEnRuta = críticos.map(c => c.t);
+        let coordsArr = [[COORD_NAVE[1], COORD_NAVE[0]]];
+        críticos.forEach(c => coordsArr.push([c.pos[1], c.pos[0]]));
+        coordsArr.push([COORD_NAVE[1], COORD_NAVE[0]]);
+
+        const coordsStr = coordsArr.map(c => c[0] + "," + c[1]).join(';');
+        const url = `https://router.project-osrm.org/route/v1/driving/${coordsStr}?overview=full&geometries=geojson`;
+
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data.code === 'Ok') {
+                elementosRuta.forEach(el => map.removeLayer(el));
+                const route = data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+                const polyline = L.polyline(route, { color: '#1a2a6c', weight: 6, opacity: 0.8 }).addTo(map);
+                elementosRuta.push(polyline);
+
+                críticos.forEach((c, index) => {
+                    const label = L.marker(c.pos, {
+                        icon: L.divIcon({ className: 'order-label', html: index + 1, iconAnchor: [12, 12] }),
+                        interactive: false
+                    }).addTo(map);
+                    elementosRuta.push(label);
+                });
+
+                document.getElementById('km-val').innerText = (data.routes[0].distance / 1000).toFixed(2);
+                document.getElementById('km-display').style.display = 'block';
+                btn.innerText = "🏁 Confirmar Vaciado de Ruta";
+                btn.style.background = "#e74c3c";
+                modoRecogida = true;
+                map.fitBounds(polyline.getBounds(), {padding: [50, 50]});
+            }
+        } catch (e) { alert("Error al trazar ruta."); }
     }
 
     async function fetchData() {
         try {
             const response = await fetch(`${BASE_URL}/latest-data`);
             const data = await response.json();
-
+            
             redContenedores.forEach(c => {
-                let weight, temp, history;
+                let w, t, h;
                 if (c.isReal) {
-                    weight = data.global.count;
-                    temp = data.global.temperature;
-                    history = data.global.history;
-                } else {
-                    const sim = data.simulados[c.t];
-                    weight = sim.current_weight;
-                    temp = sim.current_temp;
-                    history = sim.history;
+                    w = data.global.count;
+                    t = data.global.temperature;
+                    h = data.global.history;
+                } else if (data.simulados[c.t]) {
+                    w = data.simulados[c.t].current_weight;
+                    t = data.simulados[c.t].current_temp;
+                    h = data.simulados[c.t].history;
                 }
 
-                // Lógica de iconos
-                let statusKey = weight >= 90 ? 'rojo' : (weight >= 50 ? 'amarillo' : 'verde');
-                let iconUrl = temp >= 40 ? iconsMap.fuego : iconsMap[statusKey];
+                const state = getStatusData(w);
+                let iconUrl = t >= 40 ? iconsMap.fuego : iconsMap[state.key];
                 
                 markers[c.t].setIcon(L.icon({
-                    iconUrl: iconUrl,
-                    iconSize: temp >= 40 ? [35, 35] : [25, 41],
-                    iconAnchor: temp >= 40 ? [17, 17] : [12, 41]
+                    iconUrl: iconUrl, shadowUrl: t >= 40 ? null : shadowUrl,
+                    iconSize: t >= 40 ? [35, 35] : [25, 41], iconAnchor: t >= 40 ? [17, 17] : [12, 41]
                 }));
 
                 if (c.t === selectedContainerName) {
-                    document.getElementById('v-count').innerHTML = `${weight.toFixed(0)}<span class="unit">L</span>`;
-                    document.getElementById('v-temp').innerHTML = `${temp.toFixed(1)}<span class="unit">°C</span>`;
+                    document.getElementById('v-count').innerHTML = w.toFixed(1) + '<span class="unit">L</span>';
+                    document.getElementById('v-temp').innerHTML = t.toFixed(1) + '<span class="unit">°C</span>';
                     const sBox = document.getElementById('status-text');
-                    sBox.innerText = `ESTADO: ${weight >= 90 ? 'LLENO' : (weight >= 50 ? 'MITAD' : 'VACÍO')}`;
-                    sBox.style.background = weight >= 90 ? 'var(--lleno)' : (weight >= 50 ? 'var(--mitad)' : 'var(--vacio)');
-                    updateChart(history);
+                    const tBox = document.getElementById('t-temp');
+                    
+                    if (t >= 40) {
+                        tBox.innerText = "🔥 ¡ALERTA FUEGO!"; tBox.style.background = "#000"; tBox.style.color = "#e74c3c";
+                    } else {
+                        tBox.innerText = "Sensor Activo"; tBox.style.background = "#eee"; tBox.style.color = "#333";
+                    }
+                    sBox.innerText = `ESTADO: ${state.label}`;
+                    sBox.style.background = state.color;
+                    updateChart(h);
                 }
             });
-        } catch (e) { console.error(e); }
+        } catch (e) { }
+    }
+
+    function updateChart(historyData) {
+        if (!myChart || !historyData || !historyData.length) return;
+        const lastPoint = historyData[historyData.length - 1];
+        if (lastPoint.timestamp !== lastUpdateTimestamp) {
+            lastUpdateTimestamp = lastPoint.timestamp;
+            myChart.data.labels = historyData.map(p => p.timestamp);
+            myChart.data.datasets[0].data = historyData.map(p => p.weight);
+            myChart.update('none');
+        }
     }
 
     function initChart() {
-        const ctx = document.getElementById('historyChart').getContext('2d');
         if (myChart) return;
         myChart = new Chart(ctx, {
             type: 'line',
-            data: { labels: [], datasets: [{ label: 'Nivel (L)', data: [], borderColor: '#1a2a6c', tension: 0.1, fill: true, backgroundColor: 'rgba(26, 42, 108, 0.1)' }] },
-            options: { responsive: true, scales: { y: { min: 0, max: 105 } }, animation: false }
+            data: { labels: [], datasets: [{ label: 'Nivel (L)', data: [], borderColor: '#1a2a6c', tension: 0.4, fill: true, backgroundColor: 'rgba(26, 42, 108, 0.1)' }] },
+            options: { responsive: true, animation: false, scales: { y: { beginAtZero: true, max: 105 } } }
         });
     }
-
-    function updateChart(history) {
-        if (!myChart || !history) return;
-        myChart.data.labels = history.map(h => h.timestamp);
-        myChart.data.datasets[0].data = history.map(h => h.weight);
-        myChart.update('none');
-    }
-
-    // Intervalo rápido para que el botón se note al instante
-    setInterval(fetchData, 1000);
 </script>
 </body>
 </html>
