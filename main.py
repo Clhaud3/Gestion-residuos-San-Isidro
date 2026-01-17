@@ -2,31 +2,18 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
-import sys
 import os
 import time
 import random
+import threading
 
 PORT_NUMBER = 8888
 
-# --- CONFIGURACIÓN DE INICIO ---
-START_TIME = time.time() 
-
-VALORES_INICIALES = {
-    "Ronda Palmeras": random.uniform(5, 50),
-    "Calle José Antonio Cutillas": random.uniform(5, 50),
-    "Calle Palmeras": random.uniform(5, 50),
-    "Avenida de Catral": random.uniform(5, 50),
-    "Calle la Huerta": random.uniform(5, 50),
-    "Calle Pedro Lopez": random.uniform(5, 50),
-    "Calle Paz": random.uniform(5, 50),
-    "Ronda del Amor": random.uniform(5, 50)
-}
-
+# --- CONFIGURACIÓN GLOBAL ---
 data_store = {
     "global": {
         "temperature": 0.0, 
-        "count": 0,
+        "count": 0.0,
         "timestamp": "--", 
         "status": "Iniciando...",
         "history": [] 
@@ -34,20 +21,54 @@ data_store = {
     "simulados": {} 
 }
 
+NOMBRES_SIMULADOS = [
+    "Ronda Palmeras", "Calle José Antonio Cutillas", "Calle Palmeras",
+    "Avenida de Catral", "Calle la Huerta", "Calle Pedro Lopez",
+    "Calle Paz", "Ronda del Amor"
+]
+
 def obtener_objetivo_san_isidro():
     hora = datetime.now().hour
-    if 11 <= hora <= 19:
-        return 22.0
-    else:
-        return 13.0
+    return 22.0 if 11 <= hora <= 19 else 13.0
 
-for nombre in VALORES_INICIALES:
+# Inicialización de contenedores simulados con valores aleatorios iniciales
+for nombre in NOMBRES_SIMULADOS:
+    peso_ini = random.uniform(5, 30)
     data_store["simulados"][nombre] = {
-        "current_weight": VALORES_INICIALES[nombre],
+        "current_weight": peso_ini,
         "current_temp": obtener_objetivo_san_isidro() + random.uniform(-1, 1),
-        "history": []
+        "history": [{"timestamp": datetime.now().strftime("%H:%M:%S"), "weight": peso_ini}]
     }
 
+# --- HILO DE SIMULACIÓN AUTÓNOMA ---
+def bucle_llenado_automatico():
+    """Esta función corre para siempre en segundo plano"""
+    while True:
+        ts = datetime.now().strftime("%H:%M:%S")
+        temp_ambiente = obtener_objetivo_san_isidro()
+
+        for nombre in data_store["simulados"]:
+            contenedor = data_store["simulados"][nombre]
+            
+            # Subida orgánica (entre 0.1 y 0.5 litros cada ciclo)
+            incremento = random.uniform(0.1, 0.5)
+            nuevo_volumen = round(min(100, contenedor["current_weight"] + incremento), 1)
+            contenedor["current_weight"] = nuevo_volumen
+            
+            # Ajuste de temperatura suave hacia la ambiente
+            t_act = contenedor["current_temp"]
+            paso = 0.1 if t_act < temp_ambiente else -0.1
+            contenedor["current_temp"] = round(t_act + paso, 1)
+            
+            # Actualizar historial
+            contenedor["history"].append({"timestamp": ts, "weight": nuevo_volumen})
+            if len(contenedor["history"]) > 15:
+                contenedor["history"].pop(0)
+
+        # Esperar 30 segundos para la siguiente actualización
+        time.sleep(30)
+
+# --- CONTROLADOR DEL SERVIDOR ---
 class IoTHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args): return 
 
@@ -56,124 +77,83 @@ class IoTHandler(BaseHTTPRequestHandler):
         self.send_header('Content-type', content_type)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'ngrok-skip-browser-warning, Content-Type')
-        self.send_header('Connection', 'close')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
 
     def do_OPTIONS(self):
         self._set_headers(200)
 
     def do_POST(self):
-        # 1. DECLARACIÓN GLOBAL AL PRINCIPIO DE LA FUNCIÓN
-        global START_TIME
         parsed_path = urlparse(self.path)
-        
         if parsed_path.path == '/reset':
             content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            params = json.loads(post_data)
+            params = json.loads(self.rfile.read(content_length))
             contenedores_a_vaciar = params.get('contenedores', [])
-
-            segundos_transcurridos = time.time() - START_TIME
-            bloques_30s = int(segundos_transcurridos // 30)
-            aumento_actual = bloques_30s * 10
 
             for nombre in contenedores_a_vaciar:
                 if nombre == "Calle del agua":
                     data_store["global"]["count"] = 0
                     data_store["global"]["history"] = []
                 elif nombre in data_store["simulados"]:
-                    VALORES_INICIALES[nombre] = -aumento_actual 
-                    data_store["simulados"][nombre].update({
-                        "current_weight": 0,
-                        "current_temp": obtener_objetivo_san_isidro(),
-                        "history": []
-                    })
+                    data_store["simulados"][nombre]["current_weight"] = 0
+                    data_store["simulados"][nombre]["history"] = [{"timestamp": datetime.now().strftime("%H:%M:%S"), "weight": 0}]
             
             self._set_headers(200)
             self.wfile.write(json.dumps({"status": "success"}).encode())
-
-        elif parsed_path.path == '/reset-containers':
-            START_TIME = time.time()
-            data_store["global"]["count"] = 0
-            data_store["global"]["history"] = []
-            for nombre in VALORES_INICIALES:
-                VALORES_INICIALES[nombre] = 0 
-                data_store["simulados"][nombre].update({
-                    "current_weight": 0,
-                    "history": []
-                })
-            self._set_headers(200)
-            self.wfile.write(json.dumps({"status": "success"}).encode())
-
-    def actualizar_falsos(self):
-        # 2. DECLARACIÓN GLOBAL TAMBIÉN AQUÍ AL PRINCIPIO
-        global START_TIME
-        segundos_transcurridos = time.time() - START_TIME
-        bloques_30s = int(segundos_transcurridos // 30)
-        aumento_golpe = bloques_30s * 10
-        ts = datetime.now().strftime("%H:%M:%S")
-        temp_ambiente = obtener_objetivo_san_isidro()
-
-        for nombre, valor_base in VALORES_INICIALES.items():
-            nuevo_volumen = round(min(100, max(0, valor_base + aumento_golpe)), 1)
-            contenedor = data_store["simulados"][nombre]
-            
-            if not contenedor["history"] or contenedor["history"][-1]["weight"] != nuevo_volumen:
-                contenedor["current_weight"] = nuevo_volumen
-                temp_actual = contenedor["current_temp"]
-                paso = 0.5 if temp_actual < temp_ambiente else -0.5
-                contenedor["current_temp"] = round(temp_actual + paso, 1)
-                contenedor["history"].append({"timestamp": ts, "weight": nuevo_volumen})
-            
-            if len(contenedor["history"]) > 15:
-                contenedor["history"].pop(0)
 
     def do_GET(self):
         parsed_path = urlparse(self.path)
         
-        if parsed_path.path == '/' or parsed_path.path == '/index.html':
+        # Servir el HTML
+        if parsed_path.path in ['/', '/index.html']:
             try:
                 with open('index.html', 'rb') as file:
                     self._set_headers(200, 'text/html')
                     self.wfile.write(file.read())
-            except FileNotFoundError:
-                self._set_headers(404, 'text/plain')
-                self.wfile.write(b"Error: index.html no encontrado")
+            except:
+                self._set_headers(404)
 
+        # Receptor de datos del Arduino
         elif parsed_path.path == '/data-receiver':
+            query = parse_qs(parsed_path.query)
             try:
-                query = parse_qs(parsed_path.query)
-                temp_raw = query.get('temp', [0])[0]
-                current_temp = float(temp_raw)
+                temp = float(query.get('temp', [20])[0])
+                # Solo sumamos 10 si viene el parámetro 'click'
                 if 'click' in query:
-                    data_store["global"]["count"] += 10
-                current_weight = data_store["global"]["count"]
+                    data_store["global"]["count"] = min(100, data_store["global"]["count"] + 10)
+                
+                peso_actual = data_store["global"]["count"]
                 ts = datetime.now().strftime("%H:%M:%S")
+                
                 data_store["global"].update({
-                    "temperature": current_temp,
+                    "temperature": temp,
                     "timestamp": ts,
-                    "status": "LLENO" if current_weight >= 80 else "OK"
+                    "status": "LLENO" if peso_actual >= 90 else "OK"
                 })
-                if not data_store["global"]["history"] or data_store["global"]["history"][-1]["weight"] != current_weight:
-                    data_store["global"]["history"].append({"timestamp": ts, "weight": current_weight})
-                if len(data_store["global"]["history"]) > 15:
-                    data_store["global"]["history"].pop(0)
+                
+                # Actualizar historial del real
+                hist = data_store["global"]["history"]
+                if not hist or hist[-1]["weight"] != peso_actual:
+                    hist.append({"timestamp": ts, "weight": peso_actual})
+                if len(hist) > 15: hist.pop(0)
+
                 self._set_headers(200)
                 self.wfile.write(json.dumps({"status": "success"}).encode())
-            except Exception as e:
-                self._set_headers(500)
+            except:
+                self._set_headers(400)
 
+        # Envío de datos a la web
         elif parsed_path.path == '/latest-data':
-            self.actualizar_falsos()
             self._set_headers(200)
             self.wfile.write(json.dumps(data_store).encode())
 
 if __name__ == '__main__':
-    # CAMBIO PARA RENDER: Obtener puerto de la variable de entorno o usar 8888 por defecto
     port = int(os.environ.get("PORT", PORT_NUMBER))
+    
+    # Iniciar el hilo de simulación para que los falsos suban solos
+    sim_thread = threading.Thread(target=bucle_llenado_automatico, daemon=True)
+    sim_thread.start()
+    
     server = HTTPServer(('0.0.0.0', port), IoTHandler)
-    print("="*50)
-    print(f"🚀 SERVIDOR SMART CITY LISTO EN PUERTO {port}")
-    print("="*50)
+    print(f"🚀 SERVIDOR SMART CITY ACTIVO EN PUERTO {port}")
     server.serve_forever()
